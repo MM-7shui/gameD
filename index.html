@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>芥末快跑</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.js"></script>
+    
+    <!-- 🔹 加入 Google Fonts 像素字體 -->
+    <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+
+    
+    <style>
+        body {
+            font-family: 'Press Start 2P', cursive;
+            
+        }
+    </style>
+</head>
+<body>
+    <script>
+        const config = {
+            type: Phaser.AUTO,
+            width: window.innerWidth,  // **改成根據螢幕大小調整**
+            height: window.innerHeight,
+            physics: { 
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 800 },
+                    debug: false
+                }
+                
+            },
+            
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+
+        function preload() {
+            this.load.image('東雲', 'https://i.imgur.com/arb962j.png'); 
+            this.load.spritesheet('player', 'https://i.imgur.com/UlNuq7E.png', {
+                frameWidth: 110,
+                frameHeight: 110
+            });
+            this.load.image('hurt', 'https://i.imgur.com/wNPZ0TK.png');
+            this.load.image('obstacle_hit', 'https://i.imgur.com/ZPdEBgh.png');
+            this.load.image('gameover', 'https://i.imgur.com/2kgT58u.png');
+            this.load.image('player_idle', 'https://i.imgur.com/82y5QMm.png');
+            this.load.image('洛昂', 'https://i.imgur.com/NryHglw.png');
+            this.load.image('洛昂撞到', 'https://i.imgur.com/JKSLMPx.png');
+            this.load.image('gameover2', 'https://i.postimg.cc/L6sxXK8J/2.png');
+            this.load.audio('bgm', 'https://files.catbox.moe/2ce2i2.mp3'); // 把這裡的網址換成你的音樂網址！
+
+        }
+
+        let obstacles = [];
+
+        function create() {
+    this.cameras.main.setBackgroundColor('#FFFFFF'); 
+    let graphics = this.add.graphics();
+    graphics.fillStyle(0x000000, 1);
+    graphics.fillRect(0, 174, 400, 2);
+
+    this.ground = this.physics.add.staticImage(200, 175, null);
+    this.ground.displayWidth = 400;
+    this.ground.displayHeight = 2;
+    this.ground.visible = false;
+    this.ground.refreshBody();
+
+    this.player = this.physics.add.sprite(100, 100, 'player_idle').setScale(0.5);
+    this.player.setCollideWorldBounds(true);
+    this.physics.add.collider(this.player, this.ground);
+
+    this.obstacleSpeed = -200; // 初始速度
+    this.speedIncreaseThreshold = 10; // 每 10 分加速一次
+
+
+    this.score = 0;
+    this.scoreText = this.add.text(20, 20, 'score: 0', { 
+        fontSize: '16px', 
+        fill: '#8B4513', 
+        fontFamily: '"Press Start 2P"' 
+    });
+
+    // 🔹 加入背景音樂
+    if (!this.music) {
+    this.music = this.sound.add('bgm', { loop: true });
+    this.music.play();
+}
+    this.isMusicOn = true; 
+
+    function restartGame() {
+    this.scene.restart();
+    if (this.music) {
+        this.music.stop(); // 避免音樂重疊
+        this.music.play();
+    }
+}
+
+    // 在 create() 內部，設定靜音按鈕
+this.isMuted = false; // 記錄靜音狀態
+this.muteButton = this.add.text(this.cameras.main.width - 50, 20, '🔊', { fontSize: '24px', fill: '#fff' })
+    .setInteractive()
+    .setOrigin(1, 0) // 讓按鈕的右邊對齊畫面右側
+    .on('pointerdown', () => {
+        this.isMuted = !this.isMuted; // 切換靜音狀態
+        this.music.setVolume(this.isMuted ? 0 : 1); // 設定音樂音量
+        this.muteButton.setText(this.isMuted ? '🔇' : '🔊'); // 更改按鈕圖示
+    });
+
+    this.anims.create({
+        key: 'run',
+        frames: this.anims.generateFrameNumbers('player', { start: 0, end: 7 }),
+        frameRate: 10,
+        repeat: -1
+    });
+
+    this.isWaiting = true;
+    this.isGameOver = false;
+
+    // **改用 Physics Group 來管理障礙物**
+    this.obstacles = this.physics.add.group();
+
+    // **點擊螢幕開始遊戲**
+    this.input.once('pointerdown', startGame, this);
+
+    // **修正障礙物與玩家的碰撞偵測**
+    this.physics.add.collider(this.player, this.obstacles, hitObstacle, null, this);
+}
+
+
+function startGame() {
+    if (!this.isWaiting) return;
+
+    this.isWaiting = false; 
+    this.player.setTexture('player');
+    this.player.play('run'); 
+
+    // **開始生成障礙物**
+    this.obstacleTimer = this.time.addEvent({
+        delay: 1500,
+        callback: addObstacle,
+        callbackScope: this,
+        loop: true
+    });
+
+    // **允許跳躍**
+    this.input.keyboard.on('keydown-SPACE', jump, this);
+    this.input.on('pointerdown', jump, this);
+}
+
+
+        function jump() {
+            if (this.isGameOver) return;
+            if (this.player.body.blocked.down) { 
+                this.player.setVelocityY(-400);
+            }
+        }
+
+        function addObstacle() {
+    if (this.isGameOver) return; // 避免遊戲結束後還生成障礙物
+
+    console.log("生成障礙物"); // 確保這行有出現在 console
+
+    let isAirObstacle = Phaser.Math.Between(0, 1) === 1;
+    if (this.score < 10) isAirObstacle = false; // 前 10 分不出現空中障礙物
+
+    let obstacle;
+    if (isAirObstacle) {
+        obstacle = this.obstacles.create(400, 80, '洛昂').setScale(0.5);
+        obstacle.setSize(50, 50);
+        obstacle.setOffset(10, 20);
+    } else {
+        obstacle = this.obstacles.create(400, 150, '東雲').setScale(0.5);
+        obstacle.setSize(50, 50);
+        obstacle.setOffset(15, 25);
+    }
+
+    obstacle.setVelocityX(-200);
+    obstacle.body.allowGravity = false;
+    obstacle.setImmovable(true);
+    obstacle.setVelocityX(this.obstacleSpeed); // 讓障礙物用變數控制的速度移動
+
+}
+
+// **修正障礙物與玩家的碰撞偵測**
+this.physics.add.collider(this.player, this.obstacles, (player, obstacle) => {
+    let distanceX = Math.abs(player.x - obstacle.x);
+    let distanceY = Math.abs(player.y - obstacle.y);
+
+    // **只有當 X 軸 & Y 軸 距離足夠接近時才判定碰撞**
+    if (distanceX < 40 && distanceY < 50) {
+        hitObstacle.call(this, player, obstacle);
+    }
+}, null, this);
+
+
+// 當角色撞到障礙物時停止所有障礙物
+this.physics.add.collider(this.player, this.obstacles, () => {
+    this.gameOver = true; // 設定遊戲結束
+
+    // 讓所有障礙物停止
+    this.obstacles.children.iterate((obstacle) => {
+        obstacle.setVelocityX(0);
+    });
+
+    // 顯示結算畫面（這部分可以根據你的需求加上）
+}, null, this);
+
+
+
+
+function update() {
+    if (this.isWaiting || this.isGameOver) return;
+
+    this.obstacles.getChildren().forEach((obstacle) => {
+        if (obstacle.x < this.player.x - 30 && !obstacle.scored) {
+            this.score++;
+            this.scoreText.setText('score: ' + this.score);
+            obstacle.scored = true;
+
+            // 🔹 每 10 分增加一次速度
+            if (this.score >= this.speedIncreaseThreshold) {
+                this.obstacleSpeed -= 50; // 讓障礙物變快
+                this.speedIncreaseThreshold += 10; // 下一次加速的分數
+                console.log("速度增加！現在速度：" + this.obstacleSpeed);
+            }
+        }
+
+        if (obstacle.x < -20) {
+            obstacle.destroy();
+        }
+    });
+}
+
+if (this.score >= this.speedIncreaseThreshold) {
+    this.speedIncreaseThreshold += 10; // 下次加速的分數
+    this.obstacleSpeed -= 100; // 讓障礙物速度變快
+    console.log("加速！現在速度：", this.obstacleSpeed);
+
+    // 更新所有現有障礙物的速度
+    this.obstacles.getChildren().forEach((obstacle) => {
+        obstacle.setVelocityX(this.obstacleSpeed);
+    });
+}
+
+
+
+
+
+function hitObstacle(player, obstacle) {
+    if (this.isGameOver) return;
+
+    console.log("角色撞到障礙物！");
+    this.isGameOver = true;
+    player.setVelocity(0, 0);
+    player.setTexture('hurt'); 
+    player.body.moves = false;
+    player.anims.stop();
+
+    let gameOverImage = 'gameover';
+
+    if (obstacle.texture.key === '東雲') {
+        obstacle.setTexture('obstacle_hit');
+        gameOverImage = 'gameover';
+    }
+    
+    if (obstacle.texture.key === '洛昂') {
+        obstacle.setTexture('洛昂撞到'); 
+        gameOverImage = 'gameover2';
+    }
+
+    obstacle.setVelocityX(0); 
+    obstacle.body.moves = false;
+
+    // **讓所有障礙物停止**
+    this.obstacles.children.iterate(obstacle => {
+        obstacle.setVelocityX(0);
+    });
+
+    this.obstacleTimer.remove(); // **確保這行只在遊戲結束後才執行**
+    this.scoreText.setVisible(false);
+
+    this.add.image(200, 400, gameOverImage).setDisplaySize(400, 400);
+
+    this.add.text(200, 70, 'Your score: ' + this.score, { 
+        fontSize: '25px', 
+        fill: '#8B4513', 
+        fontFamily: '"Press Start 2P"',
+        fontStyle: 'bold'
+    }).setOrigin(0.5);
+
+    // **🔹 讓遊戲在點擊螢幕時重新開始**
+    this.input.once('pointerdown', () => this.scene.restart());
+}
+
+
+    </script>    
+</body>
+</html>
+
+
+
+
+
