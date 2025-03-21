@@ -296,7 +296,7 @@ function hitObstacle(player, obstacle) {
     }).setOrigin(0.5);
 
     // **🔹 讓遊戲在點擊螢幕時重新開始**
-    this.input.once('pointerdown', () => this.scene.restart());
+    this.input.once('pointerdown', resetGame, this);
 }
 
 
